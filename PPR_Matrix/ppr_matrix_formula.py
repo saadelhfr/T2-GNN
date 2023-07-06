@@ -1,8 +1,8 @@
 import torch 
 
 
-def calculate_ppr_matrix(A,  device,  alpha=0.15, tol=1e-6):
-    
+def calculate_ppr_matrix(A,  device, k=10 ,  alpha=0.15, tol=1e-6):
+
     alpha = torch.tensor(alpha, dtype=torch.float, device=device)
     I = torch.eye(A.size(0), device=device)
     
@@ -18,5 +18,12 @@ def calculate_ppr_matrix(A,  device,  alpha=0.15, tol=1e-6):
         new_P = (1 - alpha) * torch.mm(A_hat, P) + alpha * I
         diff = torch.abs(P - new_P).sum()
         P = new_P
+
+    if k is not None:
+        # Get the k most important weights
+        _, indices = torch.topk(P.view(-1), k)
+        P = torch.zeros_like(P)
+        P.view(-1)[indices] = new_P.view(-1)[indices]
+
 
     return P

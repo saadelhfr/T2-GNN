@@ -6,10 +6,6 @@ import numba
 import numpy as np
 import scipy.sparse as sp
 
-'''
-Code on https://github.com/TUM-DAML/pprgo_pytorch/blob/master/pprgo/ppr.py
-'''
-
 
 @numba.njit(cache=True, locals={'_val': numba.float32, 'res': numba.float32, 'res_vnode': numba.float32})
 def _calc_ppr_node(inode, indptr, indices, deg, alpha, epsilon):
