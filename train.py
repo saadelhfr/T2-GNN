@@ -5,10 +5,11 @@ import torch.nn as nn
 import torch.optim as optim
 import scipy.sparse as sp
 from model import Teacher_Features , Teacher_Edge , Student
+from sklearn.cluster import KMeans , SpectralClustering , AgglomerativeClustering , DBSCAN , OPTICS , Birch
 
 
 class Train : 
-    def __init__(self , epochs ,  device  , num_nodes, input_dim , output_dim , hidden2 , nbr_clusters , dropout_rate=0.2 , lr=0.001):
+    def __init__(self , epochs ,  device  , num_nodes, input_dim , output_dim , hidden2 , nbr_clusters , dropout_rate=0.2 , lr=0.001 , clustering_method='kmeans'):
         self.epochs = epochs
         self.device = device
         self.num_nodes = num_nodes
@@ -29,7 +30,31 @@ class Train :
 
         self.feat_teach_optimizer = optim.Adam(self.feature_teacher.parameters() , lr=self.lr)
         self.edge_teach_optimizer = optim.Adam(self.edge_teacher.parameters() , lr=self.lr)
-        self.student_optimizer = optim.Adam(self.student.parameters() , lr=self.lr)
+        self.student_optimizer = optim.Adam(self.student.parameters() , lr=self.lr) 
+
+        self.clustering_method = clustering_method
+
+    def pretrain_feat_teacher(self , feat_epochs , data) :
+        X = data.x
+        adj = data.adj
+        with torch.no_grad() : 
+            feat_teacher_output , _ = self.feature_teacher(X)
+        clustering = self.clustering_method(self.nbr_clusters , n_init="auto")
+        cluster_ids = clustering.fit_predict(feat_teacher_output.cpu().detach().numpy())
+        self.feature_teacher.Cluster_Layer = torch.tensor(clustering.cluster_centers_).to(self.device)
+        self.feature_teacher.Cluster_Layer.requires_grad = False
+
+        for epoch in range(feat_epochs):
+            feat_teacher_output , _ = self.feature_teacher(X)
+            
+
+
+
+
+
+
+
+        
 
         
 
