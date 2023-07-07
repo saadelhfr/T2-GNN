@@ -6,6 +6,7 @@ import torch.optim as optim
 import scipy.sparse as sp
 from model import Teacher_Features , Teacher_Edge , Student
 from sklearn.cluster import KMeans , SpectralClustering , AgglomerativeClustering , DBSCAN , OPTICS , Birch
+from utils import students_t_kernel_euclidean , student_t_kernel_cosine , generate_targer_distribution
 
 
 class Train : 
@@ -34,9 +35,10 @@ class Train :
 
         self.clustering_method = clustering_method
 
-    def pretrain_feat_teacher(self , feat_epochs , data) :
-        X = data.x
+    def pretrain_feat_teacher(self , feat_epochs , data ) :
         adj = data.adj
+        X = data.x
+        self.feature_teacher.train()
         with torch.no_grad() : 
             feat_teacher_output , _ = self.feature_teacher(X)
         clustering = self.clustering_method(self.nbr_clusters , n_init="auto")
@@ -46,6 +48,30 @@ class Train :
 
         for epoch in range(feat_epochs):
             feat_teacher_output , _ = self.feature_teacher(X)
+            """
+            Kl divergence between the target distribution and the student t kernel
+            """
+
+            Q = students_t_kernel_euclidean(feat_teacher_output , self.feature_teacher.Cluster_Layer)
+            P = generate_targer_distribution(Q)
+            kl_loss = nn.KLDivLoss()(torch.log(Q) ,P.detach())
+    
+            mse_loss = 0
+            if self.output_dim == self.input_dim :
+                mse_loss = nn.MSELoss()(feat_teacher_output , X)
+            loss = kl_loss + mse_loss
+            self.feat_teach_optimizer.zero_grad()
+            loss.backward()
+            self.feat_teach_optimizer.step()
+            print("Epoch : {} , Loss : {}".format(epoch , loss.item()))
+
+    def pretrain_edge_teacher(self , edge_epochs , data) :
+        adj = data.adj
+        
+        
+
+
+
             
 
 
