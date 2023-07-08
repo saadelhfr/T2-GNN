@@ -11,7 +11,7 @@ class Teacher_Features(nn.Module):
         self.device=device
         self.dropout = dropout
         # create the importance features
-        self.imp_features = nn.Parameter(torch.empty(size=(in_channels , nbr_nodes)))
+        self.imp_features = nn.Parameter(torch.empty(size=(nbr_nodes , in_channels )))
         nn.init.xavier_uniform_(self.imp_features.data , gain=1.414)
         # create Layers
         self.linear1 = nn.Linear(in_channels , hid_channels)
@@ -97,10 +97,11 @@ class Student(nn.Module):
 
         self.feat_student = nn.Linear(self.feat_hidd , self.hid_channels , bias=True)
         self.str_student = nn.Linear(self.str_hidd , self.hid_channels , bias=True)
+        self.to(self.device)
       
     def forward(self , X  ,Adj ) : 
         imp = torch.zeros((self.nbr_nodes , self.in_channels)).to(self.device)
-        X = torch.where(torch.isnan(X) , imp , X)
+        X = torch.where(torch.isnan(X) , imp , X).to(self.device)
         middle_representation = []
         h1 = self.gcn1(X , Adj)
         middle_representation.append(h1)
