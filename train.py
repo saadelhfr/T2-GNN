@@ -66,7 +66,32 @@ class Train :
             print("Epoch : {} , Loss : {}".format(epoch , loss.item()))
 
     def pretrain_edge_teacher(self , edge_epochs , data) :
+        self.edge_teacher.train()
         adj = data.adj
+        with torch.no_grad() : 
+            edge_teacher_output , _ = self.edge_teacher(adj)
+        clustering = self.clustering_method(self.nbr_clusters , n_init="auto")
+        cluster_ids = clustering.fit_predict(edge_teacher_output.cpu().detach().numpy())
+        self.edge_teacher.Cluster_Layer = torch.tensor(clustering.cluster_centers_).to(self.device)
+        self.edge_teacher.Cluster_Layer.requires_grad = False
+
+        for epoch in range(edge_epochs):
+            edge_teacher_output , _ = self.edge_teacher(adj)
+            """
+            Kl divergence between the target distribution and the student t kernel
+            """
+            Q = students_t_kernel_euclidean(edge_teacher_output , self.edge_teacher.Cluster_Layer)
+            P = generate_targer_distribution(Q)
+            kl_loss = nn.KLDivLoss()(torch.log(Q) ,P.detach())
+    
+            mse_loss = 0
+            if self.output_dim == self.input_dim :
+                mse_loss = nn.MSELoss()(edge_teacher_output , adj)
+            loss = kl_loss + mse_loss
+            self.edge_teach_optimizer.zero_grad()
+            loss.backward()
+            self.edge_teach_optimizer.step()
+            print("Epoch : {} , Loss : {}".format(epoch , loss.item()))
         
         
 
