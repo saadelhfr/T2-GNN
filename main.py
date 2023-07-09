@@ -16,6 +16,7 @@ A = np.array([[0, 1, 0, 0, 0, 1],
 alpha = 0.15
 eps = 0.1
 idx = np.arange(A.shape[0]) # Indices of all nodes
+print(idx)
 A_sparse = csr_matrix(A)
 P = topk_ppr_matrix(A_sparse, alpha, eps, idx, topk=5)
 
