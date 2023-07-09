@@ -44,7 +44,7 @@ class Teacher_Features(nn.Module):
     
 # Teacher Edge 
 class Teacher_Edge(nn.Module):
-    def __init__(self , nbr_nodes , in_channels , out_channels , hid_channels , dropout , concat , device):
+    def __init__(self , nbr_nodes , in_channels , out_channels , hid_channels , dropout ,  device):
         super(Teacher_Edge , self).__init__()
         self.nbr_nodes = nbr_nodes
         self.in_channels = in_channels

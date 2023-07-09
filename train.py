@@ -24,7 +24,7 @@ class Train :
 
         self.feature_teacher = Teacher_Features(self.num_nodes , self.input_dim , self.output_dim , self.hidden2 , self.dropout_rate , self.device)
         self.edge_teacher = Teacher_Edge(self.num_nodes , self.input_dim , self.output_dim , self.hidden2 , self.dropout_rate , self.device)
-        self.student = Student(self.num_nodes , self.input_dim , self.output_dim , self.hidden2 , self.dropout_rate , self.device)
+        self.student = Student(self.num_nodes , self.input_dim , self.output_dim , self.hidden2 ,self.hidden2 , self.hidden2 ,self.dropout_rate , self.device)
 
         self.feature_teacher.to(self.device)
         self.edge_teacher.to(self.device)
@@ -69,10 +69,10 @@ class Train :
     def pretrain_edge_teacher(self , edge_epochs , data) :
         self.edge_teacher.train()
         X = data.x
-        adj = data.adj
-        adj_aug = adj + topk_ppr_matrix(adj , alpha=0.05 , k=10)
+        adj_aug = data.adj_aug
         with torch.no_grad() : 
             edge_teacher_output , _ = self.edge_teacher(adj_aug)
+            edge_teacher_output = edge_teacher_output.squeeze(0)
         clustering = self.clustering_method(self.nbr_clusters , n_init="auto")
         cluster_ids = clustering.fit_predict(edge_teacher_output.cpu().detach().numpy())
         self.edge_teacher.Cluster_Layer = torch.tensor(clustering.cluster_centers_).to(self.device)
@@ -80,6 +80,8 @@ class Train :
 
         for epoch in range(edge_epochs):
             edge_teacher_output , _ = self.edge_teacher(adj_aug)
+            edge_teacher_output = edge_teacher_output.squeeze(0)
+
             """
             Kl divergence between the target distribution and the student t kernel
             """
@@ -99,7 +101,7 @@ class Train :
     def train_student(self , student_epochs , data):
         X = data.x
         adj = data.adj
-        adj_aug = adj + topk_ppr_matrix(adj , alpha=0.05 , k=10)
+        adj_aug = data.adj_aug
 
         self.student.train()
 
