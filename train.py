@@ -107,15 +107,15 @@ class Train :
 
 
         with torch.no_grad() :
-            student_output = self.student(X , adj)
+            student_output, _ = self.student(X , adj)
         clustering = self.clustering_method(self.nbr_clusters , n_init="auto")
-        cluster_ids = clustering.fit_predict(student_output.cpu().detach().numpy())
+        cluster_ids = clustering.fit_predict(student_output.squeeze(0).cpu().detach().numpy())
         self.student.Cluster_Layer = torch.tensor(clustering.cluster_centers_).to(self.device)
         self.student.Cluster_Layer.requires_grad = False
 
         with torch.no_grad() :
-            _ , middle_representation_edge = self.edge_teacher(X )
-            _ , middle_representation_feat = self.feature_teacher(adj_aug)
+            _ , middle_representation_edge = self.edge_teacher(adj_aug )
+            _ , middle_representation_feat = self.feature_teacher(X)
 
         
         for epoch in range(student_epochs):
@@ -123,10 +123,10 @@ class Train :
             """
             Kl divergence between the target distribution and the student t kernel
             """
-            Q = students_t_kernel_euclidean(student_output , self.student.Cluster_Layer)
+            Q = students_t_kernel_euclidean(student_output.squeeze(0) , self.student.Cluster_Layer)
             P = generate_targer_distribution(Q)
             kl_loss = nn.KLDivLoss()(torch.log(Q) ,P.detach())
-            struct_loss , feat_loss = self.student.semi_loss(middle_representation , middle_representation_feat , middle_representation_edge) 
+            struct_loss , feat_loss = self.student.loss(middle_representation , middle_representation_feat , middle_representation_edge) 
             loss = kl_loss + self.teta*struct_loss + self.teta*feat_loss
             self.student_optimizer.zero_grad()
             loss.backward()

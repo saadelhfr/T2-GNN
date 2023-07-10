@@ -129,17 +129,17 @@ class Student(nn.Module):
         )
     
     def loss(self , z_student : torch.tensor , z_struct : torch.tensor , z_feat : torch.tensor , mean:bool = True):
-        Emb_student_1 = z_student[0]
-        Emb_student_2 = z_student[1]
-        Emb_student_3 = z_student[2]
+        Emb_student_1 = z_student[0].squeeze(0)
+        Emb_student_2 = z_student[1].squeeze(0)
+        Emb_student_3 = z_student[2].squeeze(0)
 
-        Emb_struct_1 = self.str_student(z_struct[0])
-        Emb_struct_2 = self.str_student(z_struct[1])
-        Emb_struct_3 = self.str_student(z_struct[2])
+        Emb_struct_1 = self.str_student(z_struct[0].squeeze(0))
+        Emb_struct_2 = self.str_student(z_struct[1].squeeze(0))
+        Emb_struct_3 = self.str_student(z_struct[2].squeeze(0))
 
-        Emb_feat_1 = z_feat[0]
-        Emb_feat_2 = z_feat[1]
-        Emb_feat_3 = z_feat[2]
+        Emb_feat_1 =  self.feat_student(z_feat[0].squeeze(0))
+        Emb_feat_2 =  self.feat_student(z_feat[1].squeeze(0))
+        Emb_feat_3 =  self.feat_student(z_feat[2].squeeze(0))
 
 
         feat_stu_1 = self.semi_loss(Emb_student_1 , Emb_feat_1)
