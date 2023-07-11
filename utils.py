@@ -1,5 +1,6 @@
 import torch 
 import torch.nn.functional as F
+import networkx as nx
 
 def students_t_kernel_euclidean(z1 : torch.tensor , z2 : torch.tensor , v=1.0):
     """
@@ -51,4 +52,24 @@ def generate_targer_distribution(Q):
     P = P / torch.sum(P , dim=1 , keepdim=True)
     return P
 
-    
+"""
+relabel the nodes of the graph into indexes from 0 to N-1
+"""
+
+def relabel_nodes(graph):
+    set_of_nodes = set(graph.nodes())
+    for edge in graph.edges():
+        set_of_nodes.update(edge)
+    new_labels = [ i for i in range(len(set_of_nodes))]
+    map = {old: new for old, new in zip(set_of_nodes, new_labels)}
+    return nx.relabel_nodes(graph, map , copy=True)
+
+"""
+get adjacency matrix from a graph
+"""
+
+def get_adjacency_matrix(graph):
+    return nx.adjacency_matrix(graph).todense()
+
+def get_adjacency_matrix_torch(graph):
+    return torch.tensor(get_adjacency_matrix(graph)).float()
