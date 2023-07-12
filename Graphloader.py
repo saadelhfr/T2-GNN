@@ -1,7 +1,11 @@
 import torch 
 
 
+"""
+Takes as input a networkx Graoh and returns a list of subgraphs based on a sampling strategy 
+the goal is to be able to calculate the adjancency matrix and the PPR matrix without problems with the Ram memory 
 
+"""
 
 
 class GraphLoader():
