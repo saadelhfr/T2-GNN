@@ -73,3 +73,4 @@ def get_adjacency_matrix(graph):
 
 def get_adjacency_matrix_torch(graph):
     return torch.tensor(get_adjacency_matrix(graph)).float()
+
