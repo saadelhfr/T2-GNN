@@ -1,6 +1,8 @@
 import torch 
 import torch.nn.functional as F
 import networkx as nx
+import numpy as np 
+from scipy.sparse import csr_matrix
 from .PPR_Matrix.ppr import topk_ppr_matrix
 
 def students_t_kernel_euclidean(z1 : torch.tensor , z2 : torch.tensor , v=1.0):
@@ -79,6 +81,15 @@ def get_adjacency_matrix_torch(graph):
 get augmented adjacency matrix from a graph using PPR_Matrix module 
 """
 
-def get_augmented_adjacency_matrix(sparse_adjacency_matrix , alpha , epsilon):
-    idx = sparse_adjacency_matrix
+def get_augmented_adjacency_matrix(graph , alpha  = 0.15, epsilon = 0.1 , topk = 10):
+    sparse_adjacency_matrix = get_adjacency_matrix(graph)
+    idx = np.arange(sparse_adjacency_matrix.shape[0])
+    A_sparse = csr_matrix(sparse_adjacency_matrix)
+
+    P = topk_ppr_matrix(A_sparse, alpha, epsilon, idx, topk)
+
+    P = P.toarray()
+    P= torch.tensor(P)
+    return P
+
     
