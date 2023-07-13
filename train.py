@@ -11,7 +11,7 @@ from .PPR_Matrix.ppr import topk_ppr_matrix
 import os 
 
 class Train : 
-    def __init__(self , epochs ,  device  , num_nodes, input_dim , output_dim , hidden2 , nbr_clusters , teta = 0.5 ,dropout_rate=0.2 , lr=0.001 , clustering_method='kmeans'):
+    def __init__(self , epochs ,  device  , num_nodes, input_dim , output_dim , hidden2 , nbr_clusters , teta = 0.5 ,dropout_rate=0.2 , lr=0.001 , clustering_method=KMeans):
         self.epochs = epochs
         self.device = device
         self.num_nodes = num_nodes
@@ -42,6 +42,7 @@ class Train :
     """
 
     def pretrain_feat_teacher(self , feat_epochs , data ) :
+        # The data is a dataloader object applied to the Graphloader class
         loadcheck = input("Do you want to load a checkpoint ? (y/n) : ")
         if loadcheck == 'y' :
             self.load_checkpoint(model='feat_teacher')
@@ -49,40 +50,46 @@ class Train :
         else :
             print("Training from scratch")
 
+        print("making the clustering layer")
+        output= []
+        for batch in data : 
+            X = batch.x
+            with torch.no_grad() : 
+                feat_teacher_output , _ = self.feature_teacher(X)
+                output.append(feat_teacher_output)
+        all_outputs = torch.cat(output , dim=0)
 
-        adj = data.adj
-        X = data.x
-        self.feature_teacher.train()
-        with torch.no_grad() : 
-            feat_teacher_output , _ = self.feature_teacher(X)
         clustering = self.clustering_method(self.nbr_clusters , n_init="auto")
-        cluster_ids = clustering.fit_predict(feat_teacher_output.cpu().detach().numpy())
+        cluster_ids = clustering.fit_predict(all_outputs.cpu().detach().numpy())
         self.feature_teacher.Cluster_Layer = torch.tensor(clustering.cluster_centers_).to(self.device)
         self.feature_teacher.Cluster_Layer.requires_grad = False
 
         for epoch in range(feat_epochs):
-            feat_teacher_output , _ = self.feature_teacher(X)
-            """
-            Kl divergence between the target distribution and the student t kernel
-            """
+            for batch in data :
+                X = batch.x
 
-            Q = students_t_kernel_euclidean(feat_teacher_output , self.feature_teacher.Cluster_Layer)
-            P = generate_targer_distribution(Q)
-            kl_loss = nn.KLDivLoss()(torch.log(Q) ,P.detach())
-    
-            mse_loss = 0
-            if self.output_dim == self.input_dim :
-                mse_loss = nn.MSELoss()(feat_teacher_output , X)
-            loss = kl_loss + mse_loss
-            self.feat_teach_optimizer.zero_grad()
-            loss.backward()
-            self.feat_teach_optimizer.step()
-            print("Epoch : {} , Loss : {}".format(epoch , loss.item()))
-            if epoch % 10 == 0 :
-                self.save_checkpoint(epoch , model='feat_teacher')
-                print("Feature teacher checkpoint saved at epoch {}".format(epoch))
+                feat_teacher_output , _ = self.feature_teacher(X)
+                """
+                Kl divergence between the target distribution and the student t kernel
+                """
 
-    """
+                Q = students_t_kernel_euclidean(feat_teacher_output , self.feature_teacher.Cluster_Layer)
+                P = generate_targer_distribution(Q)
+                kl_loss = nn.KLDivLoss()(torch.log(Q) ,P.detach())
+        
+                mse_loss = 0
+                if self.output_dim == self.input_dim :
+                    mse_loss = nn.MSELoss()(feat_teacher_output , X)
+                loss = kl_loss + mse_loss
+                self.feat_teach_optimizer.zero_grad()
+                loss.backward()
+                self.feat_teach_optimizer.step()
+                print("Epoch : {} , Loss : {}".format(epoch , loss.item()))
+                if epoch % 10 == 0 :
+                    self.save_checkpoint(epoch , model='feat_teacher')
+                    print("Feature teacher checkpoint saved at epoch {}".format(epoch))
+
+        """
     pretrain the edge teacher 
     """
 
