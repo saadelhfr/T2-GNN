@@ -9,6 +9,8 @@ from sklearn.cluster import KMeans , SpectralClustering , AgglomerativeClusterin
 from .utils import students_t_kernel_euclidean , student_t_kernel_cosine , generate_targer_distribution
 from .PPR_Matrix.ppr import topk_ppr_matrix
 import os 
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+from tqdm import tqdm
 
 class Train : 
     def __init__(self , epochs ,  device  , num_nodes, input_dim , output_dim , hidden2 , nbr_clusters , teta = 0.5 ,dropout_rate=0.2 , lr=0.001 , clustering_method=KMeans):
@@ -42,7 +44,6 @@ class Train :
     """
 
     def pretrain_feat_teacher(self , feat_epochs , data ) :
-        # The data is a dataloader object applied to the Graphloader class
         loadcheck = input("Do you want to load a checkpoint ? (y/n) : ")
         if loadcheck == 'y' :
             self.load_checkpoint(model='feat_teacher')
@@ -51,11 +52,14 @@ class Train :
             print("Training from scratch")
 
         print("making the clustering layer")
-        output= []
-        for batch in data : 
-            X = batch.x
+
+        output = []
+        for batch in tqdm(data  , total=len(data)): 
+            batch.to(self.device)
+            X = batch.x.squeeze(1)
+            pe_feat = batch.pe_feat
             with torch.no_grad() : 
-                feat_teacher_output , _ = self.feature_teacher(X)
+                feat_teacher_output , _ = self.feature_teacher(X , pe_feat)
                 output.append(feat_teacher_output)
         all_outputs = torch.cat(output , dim=0)
 
@@ -63,15 +67,22 @@ class Train :
         cluster_ids = clustering.fit_predict(all_outputs.cpu().detach().numpy())
         self.feature_teacher.Cluster_Layer = torch.tensor(clustering.cluster_centers_).to(self.device)
         self.feature_teacher.Cluster_Layer.requires_grad = False
+        print("Clustering layer made")
+            
+            # clear memory
+        del X, pe_feat, feat_teacher_output , output , all_outputs 
+        torch.cuda.empty_cache()
 
         for epoch in range(feat_epochs):
-            for batch in data :
-                X = batch.x
+            print("starting epoch {}".format(epoch))
+            epoch_loss=0
+            for batch in tqdm(data , desc="Epoch : {}".format(epoch) , total=len(data)):
+                batch.to(self.device)
+                X = batch.x.squeeze(1)
+                
+                pe_feat = batch.pe_feat
 
-                feat_teacher_output , _ = self.feature_teacher(X)
-                """
-                Kl divergence between the target distribution and the student t kernel
-                """
+                feat_teacher_output , _ = self.feature_teacher(X, pe_feat)
 
                 Q = students_t_kernel_euclidean(feat_teacher_output , self.feature_teacher.Cluster_Layer)
                 P = generate_targer_distribution(Q)
@@ -81,15 +92,22 @@ class Train :
                 if self.output_dim == self.input_dim :
                     mse_loss = nn.MSELoss()(feat_teacher_output , X)
                 loss = kl_loss + mse_loss
+
                 self.feat_teach_optimizer.zero_grad()
                 loss.backward()
                 self.feat_teach_optimizer.step()
-                print("Epoch : {} , Loss : {}".format(epoch , loss.item()))
-                if epoch % 10 == 0 :
-                    self.save_checkpoint(epoch , model='feat_teacher')
-                    print("Feature teacher checkpoint saved at epoch {}".format(epoch))
+                epoch_loss += loss.item()
 
-        """
+                # clear memory
+                del X, pe_feat, feat_teacher_output, Q, P, kl_loss, mse_loss, loss
+                torch.cuda.empty_cache()
+
+            print("Epoch : {} , Loss : {}".format(epoch , epoch_loss))
+            if epoch % 10 == 0 :
+                self.save_checkpoint(epoch , model='feat_teacher')
+                print("Feature teacher checkpoint saved at epoch {}".format(epoch))
+
+            """
     pretrain the edge teacher 
     """
 
@@ -100,36 +118,65 @@ class Train :
             print("Feature teacher checkpoint loaded")
         else :
             print("Training from scratch")
-        self.edge_teacher.train()
-        X = data.x
-        adj_aug = data.adj_aug
-        with torch.no_grad() : 
-            edge_teacher_output , _ = self.edge_teacher(adj_aug)
-            edge_teacher_output = edge_teacher_output.squeeze(0)
+
+        print("making the clustering layer")
+        output = []
+        for batch in tqdm(data  , total=len(data)) :
+            batch.to(self.device)
+            adj_aug = batch.adj_aug
+            pe_feat = batch.pe_feat.to_dense()
+            with torch.no_grad() : 
+                edge_teacher_output , _ = self.edge_teacher( adj_aug, pe_feat )
+                output.append(edge_teacher_output.squeeze(0))
+            del adj_aug , pe_feat , edge_teacher_output
+        all_outputs = torch.cat(output , dim=0)
+
         clustering = self.clustering_method(self.nbr_clusters , n_init="auto")
-        cluster_ids = clustering.fit_predict(edge_teacher_output.cpu().detach().numpy())
+        cluster_ids = clustering.fit_predict(all_outputs.cpu().detach().numpy())
         self.edge_teacher.Cluster_Layer = torch.tensor(clustering.cluster_centers_).to(self.device)
         self.edge_teacher.Cluster_Layer.requires_grad = False
+        print("Clustering layer made")
+        print("the shape of the clustering layer is : {}".format(self.edge_teacher.Cluster_Layer.shape))
+        del output , all_outputs
+
+        self.edge_teacher.train()
+        
 
         for epoch in range(edge_epochs):
-            edge_teacher_output , _ = self.edge_teacher(adj_aug)
-            edge_teacher_output = edge_teacher_output.squeeze(0)
+            print("starting epoch {}".format(epoch))
+            epoch_loss=0
+            for batch in tqdm(data , desc="Epoch : {}".format(epoch) , total=len(data)):
+                batch.to(self.device)
+                X = batch.x.squeeze(1)
+                adj_aug = batch.adj_aug
+                pe_feat = batch.pe_feat.to_dense()
 
-            """
-            Kl divergence between the target distribution and the student t kernel
-            """
-            Q = students_t_kernel_euclidean(edge_teacher_output , self.edge_teacher.Cluster_Layer)
-            P = generate_targer_distribution(Q)
-            kl_loss = nn.KLDivLoss()(torch.log(Q) ,P.detach())
-    
-            mse_loss = 0
-            if self.output_dim == self.input_dim :
-                mse_loss = nn.MSELoss()(edge_teacher_output , X)
-            loss = kl_loss + mse_loss
-            self.edge_teach_optimizer.zero_grad()
-            loss.backward()
-            self.edge_teach_optimizer.step()
-            print("Epoch : {} , Loss : {}".format(epoch , loss.item()))
+                edge_teacher_output , _ = self.edge_teacher(adj_aug , pe_feat)
+                edge_teacher_output = edge_teacher_output.squeeze(0)
+
+                Q = students_t_kernel_euclidean(edge_teacher_output , self.edge_teacher.Cluster_Layer)
+                P = generate_targer_distribution(Q)
+
+                kl_loss = nn.KLDivLoss()(torch.log(Q) ,P.detach())
+
+                mse_loss = 0
+                if self.output_dim == self.input_dim :
+                    mse_loss = nn.MSELoss()(edge_teacher_output , X)
+
+                loss = kl_loss 
+
+                self.edge_teach_optimizer.zero_grad()
+                loss.backward()
+                self.edge_teach_optimizer.step()
+
+                epoch_loss += loss.item()
+
+                # clear memory
+                del adj_aug , pe_feat , edge_teacher_output, Q, P, kl_loss, mse_loss, loss
+                torch.cuda.empty_cache()
+
+            
+            print("Epoch : {} , Loss : {}".format(epoch , epoch_loss))
             if epoch % 10 == 0 :
                 self.save_checkpoint(epoch , model='edge_teacher')
                 print("Edge teacher checkpoint saved at epoch {}".format(epoch))

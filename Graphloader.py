@@ -4,7 +4,9 @@ from torch_geometric.data import Data ,  DataLoader  , Dataset
 import networkx as nx
 import random 
 import os 
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 from .utils import get_adjacency_matrix_torch , get_augmented_adjacency_matrix
+from tqdm import tqdm
 
 
 random.seed(42)
@@ -20,7 +22,7 @@ the goal is to be able to calculate the adjancency matrix and the PPR matrix wit
 
 
 class GraphLoader(Dataset):
-    def __init__(self , load_path , sampling_strategy, device ,  save_path :str ="/Data/Subgraphs/"  ,directed :bool = False) :
+    def __init__(self , load_path , sampling_strategy, device , nbr_subgraphs_merged = None ,  save_path :str ="/Data/Subgraphs/"  ,directed :bool = False) :
         super().__init__()
         self.load_path = load_path
         self.save_path = save_path
@@ -28,6 +30,7 @@ class GraphLoader(Dataset):
         self.directed = directed
         self.device = device
         self.list_subgraphs_paths :list[str] = []
+        self.nbr_subgraphs_merged = nbr_subgraphs_merged
 
 
     def len(self):
@@ -48,16 +51,21 @@ class GraphLoader(Dataset):
     def save_torch_geo_subgraph(self , subgraph , path : str) :
         torch.save(subgraph , path)
 
-    def torch_graph_from_set(self , set ): 
+    def torch_graph_from_set(self , set , nodes_before  ): 
         subgraph = self.graph.subgraph(set)
         adj = get_adjacency_matrix_torch(subgraph)
         adj_aug = get_augmented_adjacency_matrix(subgraph)
+        I = torch.FloatTensor(torch.eye(subgraph.number_of_nodes()))
+        nbr_zerosleft = nodes_before
+        nbr_zerosright = self.nbr_nodes - subgraph.number_of_nodes() - nbr_zerosleft
+        I = torch.cat((torch.zeros(( subgraph.number_of_nodes() ,nbr_zerosleft)) , I , torch.zeros((  subgraph.number_of_nodes() , nbr_zerosright))) , dim=1)
         data = from_networkx(subgraph)
         data.adj = adj
+        data.pe_feat = I.to_sparse()
         data.adj_aug = adj_aug
         data.x=data.attr_dict
-        data = data.to(self.device)
-        return data
+        nodes_before = nodes_before + subgraph.number_of_nodes()
+        return data , nodes_before
 
 
     def sample_subgraphs(self):
@@ -71,10 +79,13 @@ class GraphLoader(Dataset):
         else : 
             raise NotImplementedError("Sampling strategy not implemented")
     
-    def get_subgraphs_set(self , nbr_subgraphs_merged : int =1000 ,  save : bool = True) : 
+    def get_subgraphs_set(self , nbr_subgraphs_merged : int =300 ,  save : bool = True) : 
         """
     
         """
+        if self.nbr_subgraphs_merged is not None :
+            nbr_subgraphs_merged = self.nbr_subgraphs_merged
+        
         list_subgraphs  = self.subgraphs.copy()
         random.shuffle(list_subgraphs)
         connected_components_sublists = [list_subgraphs[i:i + nbr_subgraphs_merged] for i in range(0, len(list_subgraphs), nbr_subgraphs_merged)]
@@ -94,11 +105,13 @@ class GraphLoader(Dataset):
         print("finished merging subgraphs")
 
     def save_all(self):
-        for i, subgraph_set in enumerate(self.subgraph_sets):
-            subgraph = self.torch_graph_from_set(subgraph_set)
+        nodes_before = 0
+        for i, subgraph_set in tqdm(enumerate(self.subgraph_sets) , total=len(self.subgraph_sets)):
+            subgraph , nodes_before = self.torch_graph_from_set(subgraph_set , nodes_before)
             path = os.path.join(self.save_path, f"subgraph_{i}.pth")
             self.list_subgraphs_paths.append(path)
             self.save_torch_geo_subgraph(subgraph, path)
+            del subgraph
 
     def load_all(self):
         self.subgraphs = [torch.load(path) for path in self.list_subgraphs_paths]

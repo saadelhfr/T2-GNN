@@ -5,6 +5,7 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from .PPR_Matrix.ppr import topk_ppr_matrix
 
+
 def students_t_kernel_euclidean(z1 : torch.tensor , z2 : torch.tensor , v=1.0):
     """
     Computes the students t kernel between z1 and z2

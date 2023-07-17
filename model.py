@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import DenseSAGEConv
 
+import os
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 
 class Teacher_Features(nn.Module):
@@ -28,8 +30,12 @@ class Teacher_Features(nn.Module):
                 if layer.bias is not None:
                     nn.init.zeros_(layer.bias.data)            
 
-    def forward(self , x):
-        x = torch.where(torch.isnan(x) , self.imp_features , x)
+    def forward(self , x,pe_feat):
+        idx = pe_feat._indices()[1].to(self.device)
+        imp_feat_reduced = self.imp_features[idx]
+        nan_mask = torch.isnan(x)
+        x[nan_mask] = imp_feat_reduced[nan_mask]
+        x.to(self.device)
         middle_representation = []
         h1 = self.linear1(x)
         middle_representation.append(h1)
@@ -37,7 +43,7 @@ class Teacher_Features(nn.Module):
         h2 = F.leaky_relu(self.linear2(h2))
         middle_representation.append(h2)
         h3 = F.dropout(h2 , p=self.dropout , training=self.training)
-        h3 = F.leaky_relu(h3)
+        h3 = F.leaky_relu(self.linear3(h3))
         middle_representation.append(h3)
 
         return h3 , middle_representation
@@ -55,14 +61,13 @@ class Teacher_Edge(nn.Module):
         self.gcn2 = DenseSAGEConv(hid_channels , hid_channels)
         self.gcn3 = DenseSAGEConv(hid_channels , out_channels)
         self.linear = nn.Linear(self.nbr_nodes , self.in_channels  , bias=True )
-        self.pe_feat = torch.FloatTensor(torch.eye(nbr_nodes)).to(self.device)
-
+ 
         # Initialize weights
         self.to(self.device)
     
-    def forward(self , Adj):
+    def forward(self , Adj , pe_feat):
         middle_representation = []
-        x = self.linear(self.pe_feat)
+        x = self.linear(pe_feat)
 
         h1 = self.gcn1(x , Adj)
         middle_representation.append(h1)
@@ -100,7 +105,7 @@ class Student(nn.Module):
         self.to(self.device)
       
     def forward(self , X  ,Adj ) : 
-        imp = torch.zeros((self.nbr_nodes , self.in_channels)).to(self.device)
+        imp = torch.zeros((X.shape[0] , self.in_channels)).to(self.device)
         X = torch.where(torch.isnan(X) , imp , X).to(self.device)
         middle_representation = []
         h1 = self.gcn1(X , Adj)

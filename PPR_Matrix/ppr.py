@@ -76,7 +76,7 @@ def ppr_topk(adj_matrix, alpha, epsilon, nodes, topk):
 
 
 def construct_sparse(neighbors, weights, shape):
-    i = np.repeat(np.arange(len(neighbors)), np.fromiter(map(len, neighbors), dtype=np.int))
+    i = np.repeat(np.arange(len(neighbors)), np.fromiter(map(len, neighbors), dtype=int))
     j = np.concatenate(neighbors)
     return sp.coo_matrix((np.concatenate(weights), (i, j)), shape)
 
