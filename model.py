@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import DenseSAGEConv
+from torch.utils.checkpoint import checkpoint
 
 import os
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
@@ -31,7 +32,7 @@ class Teacher_Features(nn.Module):
                     nn.init.zeros_(layer.bias.data)            
 
     def forward(self , x,pe_feat):
-        idx = pe_feat._indices()[1].to(self.device)
+        idx = pe_feat._indices()[1]
         imp_feat_reduced = self.imp_features[idx]
         nan_mask = torch.isnan(x)
         x[nan_mask] = imp_feat_reduced[nan_mask]
@@ -65,9 +66,11 @@ class Teacher_Edge(nn.Module):
         # Initialize weights
         self.to(self.device)
     
-    def forward(self , Adj , pe_feat):
+    def forward(self , Adj , pe_feat , X):
         middle_representation = []
         x = self.linear(pe_feat)
+        mask = torch.isnan(X)
+        X[mask] = x[mask]
 
         h1 = self.gcn1(x , Adj)
         middle_representation.append(h1)
@@ -155,6 +158,8 @@ class Student(nn.Module):
         struct_stu_2 = self.semi_loss(Emb_student_2 , Emb_struct_2)
         struct_stu_3 = self.semi_loss(Emb_student_3 , Emb_struct_3)
 
+        del Emb_student_1 , Emb_student_2 , Emb_student_3 , Emb_struct_1 , Emb_struct_2 , Emb_struct_3 , Emb_feat_1 , Emb_feat_2 , Emb_feat_3
+
         feat_struct_1 = feat_stu_1.mean() if mean else feat_stu_1.sum()
         feat_struct_2 = feat_stu_2.mean() if mean else feat_stu_2.sum()
         feat_struct_3 = feat_stu_3.mean() if mean else feat_stu_3.sum()
@@ -165,6 +170,8 @@ class Student(nn.Module):
 
         loss_feat = feat_struct_1 + feat_struct_2 + feat_struct_3
         loss_struct = struct_struct_1 + struct_struct_2 + struct_struct_3
+
+        del feat_stu_1 , feat_stu_2 , feat_stu_3 , struct_stu_1 , struct_stu_2 , struct_stu_3
 
         return loss_feat , loss_struct
 

@@ -1,11 +1,13 @@
 
 import time
 import torch
+
 import torch.nn as nn
 import torch.optim as optim
 import scipy.sparse as sp
 from .model import Teacher_Features , Teacher_Edge , Student
 from sklearn.cluster import KMeans , SpectralClustering , AgglomerativeClustering , DBSCAN , OPTICS , Birch
+from .accuracy import get_accuracy
 from .utils import students_t_kernel_euclidean , student_t_kernel_cosine , generate_targer_distribution
 from .PPR_Matrix.ppr import topk_ppr_matrix
 import os 
@@ -73,8 +75,9 @@ class Train :
         del X, pe_feat, feat_teacher_output , output , all_outputs 
         torch.cuda.empty_cache()
 
-        for epoch in range(feat_epochs):
+        for epoch in range(1 , 1+feat_epochs):
             print("starting epoch {}".format(epoch))
+            all_outputs = []
             epoch_loss=0
             for batch in tqdm(data , desc="Epoch : {}".format(epoch) , total=len(data)):
                 batch.to(self.device)
@@ -91,6 +94,15 @@ class Train :
                 mse_loss = 0
                 if self.output_dim == self.input_dim :
                     mse_loss = nn.MSELoss()(feat_teacher_output , X)
+                    with open("mse_loss.txt" , "a") as f :
+                        f.write("Epoch : {} , Loss : {} \n".format(epoch , mse_loss.item()))
+                        f.write("shape of the output : {} \n".format(feat_teacher_output.shape))
+                        f.write("shape of the input : {} \n".format(X.shape))
+                        f.write("shape of the pe_feat : {} \n".format(pe_feat.shape))
+                        f.write("is their nan in the output : {} \n".format(torch.isnan(feat_teacher_output).any()))
+                        f.write("is their nan in the input : {} \n".format(torch.isnan(X).any()))
+                        
+
                 loss = kl_loss + mse_loss
 
                 self.feat_teach_optimizer.zero_grad()
@@ -98,11 +110,18 @@ class Train :
                 self.feat_teach_optimizer.step()
                 epoch_loss += loss.item()
 
+                feat_teacher_output = feat_teacher_output.squeeze(0).detach().cpu()
+                all_outputs.append(feat_teacher_output)
+
+
                 # clear memory
                 del X, pe_feat, feat_teacher_output, Q, P, kl_loss, mse_loss, loss
                 torch.cuda.empty_cache()
+            all_outputs = torch.cat(all_outputs , dim=0)
+            sil_score, db_score, ch_score = get_accuracy(all_outputs , self.nbr_clusters)
 
             print("Epoch : {} , Loss : {}".format(epoch , epoch_loss))
+            print("Silhouette score : {} , Davies Bouldin score : {} , Calinski Harabasz score : {}".format(sil_score , db_score , ch_score))
             if epoch % 10 == 0 :
                 self.save_checkpoint(epoch , model='feat_teacher')
                 print("Feature teacher checkpoint saved at epoch {}".format(epoch))
@@ -123,10 +142,11 @@ class Train :
         output = []
         for batch in tqdm(data  , total=len(data)) :
             batch.to(self.device)
+            X = batch.x.squeeze(1)
             adj_aug = batch.adj_aug
             pe_feat = batch.pe_feat.to_dense()
             with torch.no_grad() : 
-                edge_teacher_output , _ = self.edge_teacher( adj_aug, pe_feat )
+                edge_teacher_output , _ = self.edge_teacher( adj_aug, pe_feat , X)
                 output.append(edge_teacher_output.squeeze(0))
             del adj_aug , pe_feat , edge_teacher_output
         all_outputs = torch.cat(output , dim=0)
@@ -138,20 +158,25 @@ class Train :
         print("Clustering layer made")
         print("the shape of the clustering layer is : {}".format(self.edge_teacher.Cluster_Layer.shape))
         del output , all_outputs
+        torch.cuda.empty_cache()
+
 
         self.edge_teacher.train()
         
 
-        for epoch in range(edge_epochs):
+        for epoch in range(1 , 1+edge_epochs):
             print("starting epoch {}".format(epoch))
             epoch_loss=0
+            all_outputs = []
             for batch in tqdm(data , desc="Epoch : {}".format(epoch) , total=len(data)):
                 batch.to(self.device)
                 X = batch.x.squeeze(1)
                 adj_aug = batch.adj_aug
                 pe_feat = batch.pe_feat.to_dense()
 
-                edge_teacher_output , _ = self.edge_teacher(adj_aug , pe_feat)
+                
+
+                edge_teacher_output , _ = self.edge_teacher( adj_aug, pe_feat , X)
                 edge_teacher_output = edge_teacher_output.squeeze(0)
 
                 Q = students_t_kernel_euclidean(edge_teacher_output , self.edge_teacher.Cluster_Layer)
@@ -162,21 +187,36 @@ class Train :
                 mse_loss = 0
                 if self.output_dim == self.input_dim :
                     mse_loss = nn.MSELoss()(edge_teacher_output , X)
+                    # print the mse loss in another file
+                    with open("mse_loss.txt" , "a") as f :
+                        f.write("Epoch : {} , Loss : {} \n".format(epoch , mse_loss.item()))
+                        f.write("shape of the output : {} \n".format(edge_teacher_output.shape))
+                        f.write("shape of the input : {} \n".format(X.shape))
+                        f.write("shape of the pe_feat : {} \n".format(pe_feat.shape))
+                        f.write("is their nan in the output : {} \n".format(torch.isnan(edge_teacher_output).any()))
+                        f.write("is their nan in the input : {} \n".format(torch.isnan(X).any()))
 
-                loss = kl_loss 
+
+                loss = kl_loss + mse_loss
 
                 self.edge_teach_optimizer.zero_grad()
                 loss.backward()
                 self.edge_teach_optimizer.step()
 
                 epoch_loss += loss.item()
+                edge_teacher_output = edge_teacher_output.squeeze(0).detach().cpu()
+                all_outputs.append(edge_teacher_output)
 
                 # clear memory
                 del adj_aug , pe_feat , edge_teacher_output, Q, P, kl_loss, mse_loss, loss
                 torch.cuda.empty_cache()
+            all_outputs = torch.cat(all_outputs , dim=0)
+            sil_score, db_score, ch_score = get_accuracy(all_outputs , self.nbr_clusters)
+
 
             
             print("Epoch : {} , Loss : {}".format(epoch , epoch_loss))
+            print("Silhouette score : {} , Davies Bouldin score : {} , Calinski Harabasz score : {}".format(sil_score , db_score , ch_score))
             if epoch % 10 == 0 :
                 self.save_checkpoint(epoch , model='edge_teacher')
                 print("Edge teacher checkpoint saved at epoch {}".format(epoch))
@@ -193,43 +233,74 @@ class Train :
             print("Feature teacher checkpoint loaded")
         else :
             print("Training from scratch")
-        X = data.x
-        adj = data.adj
-        adj_aug = data.adj_aug
+        print("making the clustering layer for the student model")
+
+        output = []
+        for batch in tqdm(data, total=len(data)):
+            batch.to(self.device)
+            X = batch.x.squeeze(1)
+            adj = batch.adj
+            adj_aug = batch.adj_aug
+            with torch.no_grad() :
+                student_output, _ = self.student(X , adj)
+                output.append(student_output.squeeze(0))
+        all_outputs = torch.cat(output , dim=0)
+
+        clustering = self.clustering_method(self.nbr_clusters , n_init="auto")
+        cluster_ids = clustering.fit_predict(all_outputs.cpu().detach().numpy())
+        self.student.Cluster_Layer = torch.tensor(clustering.cluster_centers_).to(self.device)
+        self.student.Cluster_Layer.requires_grad = False
+        print("Clustering layer for student model made")
+
+        del output , all_outputs
+        torch.cuda.empty_cache()
+
 
         self.student.train()
 
 
-        with torch.no_grad() :
-            student_output, _ = self.student(X , adj)
-        clustering = self.clustering_method(self.nbr_clusters , n_init="auto")
-        cluster_ids = clustering.fit_predict(student_output.squeeze(0).cpu().detach().numpy())
-        self.student.Cluster_Layer = torch.tensor(clustering.cluster_centers_).to(self.device)
-        self.student.Cluster_Layer.requires_grad = False
 
-        with torch.no_grad() :
-            _ , middle_representation_edge = self.edge_teacher(adj_aug )
-            _ , middle_representation_feat = self.feature_teacher(X)
 
-        
-        for epoch in range(student_epochs):
-            student_output , middle_representation = self.student(X , adj)
-            """
-            Kl divergence between the target distribution and the student t kernel
-            """
-            Q = students_t_kernel_euclidean(student_output.squeeze(0) , self.student.Cluster_Layer)
-            P = generate_targer_distribution(Q)
-            kl_loss = nn.KLDivLoss()(torch.log(Q) ,P.detach())
-            struct_loss , feat_loss = self.student.loss(middle_representation , middle_representation_feat , middle_representation_edge) 
-            loss = kl_loss + self.teta*struct_loss + self.teta*feat_loss
-            self.student_optimizer.zero_grad()
-            loss.backward()
-            self.student_optimizer.step()
-            print("Epoch : {} , Loss : {}".format(epoch , loss.item()))
+        for epoch in range(1 , 1+student_epochs):
+            print("starting epoch {}".format(epoch))
+            epoch_loss=0
+            for batch in tqdm(data , desc="Epoch : {}".format(epoch) , total=len(data)):
+                batch.to(self.device)
+                X = batch.x.squeeze(1)
+                adj = batch.adj
+                adj_aug = batch.adj_aug
+                pe_feat = batch.pe_feat
+                pe_feat_dense = pe_feat.to_dense()
+
+                with torch.no_grad() :
+                    _ , middle_representation_edge = self.edge_teacher(adj_aug ,pe_feat_dense , X)
+                    _ , middle_representation_feat = self.feature_teacher(X , pe_feat)
+
+                student_output , middle_representation = self.student(X , adj)
+                student_output = student_output.squeeze(0)
+                
+            
+                Q = students_t_kernel_euclidean(student_output , self.student.Cluster_Layer)
+                P = generate_targer_distribution(Q)
+
+                kl_loss = nn.KLDivLoss()(torch.log(Q) ,P.detach())
+                struct_loss , feat_loss = self.student.loss(middle_representation , middle_representation_feat , middle_representation_edge) 
+                loss = kl_loss + self.teta*struct_loss + self.teta*feat_loss
+
+                self.student_optimizer.zero_grad()
+                loss.backward()
+                self.student_optimizer.step()
+                epoch_loss += loss.item()
+
+                # clear memory
+                del X, adj, adj_aug, student_output, Q, P, kl_loss, struct_loss, feat_loss, loss
+                torch.cuda.empty_cache()
+
+
+            print("Epoch : {} , Loss : {}".format(epoch , epoch_loss))
             if epoch % 10 == 0 :
                 self.save_checkpoint(epoch , model='student')
-                print("Student checkpoint saved at epoch {}".format(epoch))
-
+                print("Student model checkpoint saved at epoch {}".format(epoch))
 
 
     """
