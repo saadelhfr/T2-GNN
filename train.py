@@ -1,10 +1,15 @@
 
 import time
 import torch
-
+import numpy as np
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+
+
 import scipy.sparse as sp
+
+
 from .model import Teacher_Features , Teacher_Edge , Student
 from sklearn.cluster import KMeans , SpectralClustering , AgglomerativeClustering , DBSCAN , OPTICS , Birch
 from .accuracy import get_accuracy
@@ -38,8 +43,13 @@ class Train :
         self.student.to(self.device)
 
         self.feat_teach_optimizer = optim.Adam(self.feature_teacher.parameters() , lr=self.lr , weight_decay=self.weight_decay)
+        self.feat_scheduler = ReduceLROnPlateau(self.feat_teach_optimizer , mode='min' , factor=0.5 , patience=10 , verbose=True)
+
         self.edge_teach_optimizer = optim.Adam(self.edge_teacher.parameters() , lr=self.lr , weight_decay=self.weight_decay)
+        self.edge_scheduler = ReduceLROnPlateau(self.edge_teach_optimizer , mode='min' , factor=0.5 , patience=10 , verbose=True)
+
         self.student_optimizer = optim.Adam(self.student.parameters() , lr=self.lr , weight_decay=self.weight_decay) 
+        self.student_scheduler = ReduceLROnPlateau(self.student_optimizer , mode='min' , factor=0.5 , patience=10 , verbose=True)
 
         self.clustering_method = clustering_method
 
@@ -76,6 +86,8 @@ class Train :
             # clear memory
         del X, pe_feat, feat_teacher_output , output , all_outputs 
         torch.cuda.empty_cache()
+
+        lowest_loss = np.inf
 
         for epoch in range(1 , 1+feat_epochs):
             print("starting epoch {}".format(epoch))
@@ -119,6 +131,19 @@ class Train :
                 # clear memory
                 del X, pe_feat, feat_teacher_output, Q, P, kl_loss, mse_loss, loss
                 torch.cuda.empty_cache()
+            self.feat_scheduler.step(epoch_loss)
+            if epoch_loss < lowest_loss :
+                lowest_loss = epoch_loss
+                self.save_checkpoint(epoch , model='best_feat_teacher')
+                print("Best feature teacher checkpoint saved at epoch {}".format(epoch))
+            if epoch_loss > lowest_loss :
+                patience += 1
+            else :
+                patience = 0
+            if patience > 10 :
+                print("Early stopping")
+                break
+
             all_outputs = torch.cat(all_outputs , dim=0)
             sil_score, db_score, ch_score = get_accuracy(all_outputs , self.nbr_clusters)
 
@@ -135,8 +160,8 @@ class Train :
     def pretrain_edge_teacher(self , edge_epochs , data) :
         loadcheck = input("Do you want to load a checkpoint ? (y/n) : ")
         if loadcheck == 'y' :
-            self.load_checkpoint(model='feat_teacher')
-            print("Feature teacher checkpoint loaded")
+            self.load_checkpoint(model='best_edge_teacher')
+            print("edge teacher checkpoint loaded")
         else :
             print("Training from scratch")
 
@@ -164,6 +189,9 @@ class Train :
 
 
         self.edge_teacher.train()
+
+        lowest_loss = np.inf
+
         
 
         for epoch in range(1 , 1+edge_epochs):
@@ -212,6 +240,19 @@ class Train :
                 # clear memory
                 del adj_aug , pe_feat , edge_teacher_output, Q, P, kl_loss, mse_loss, loss
                 torch.cuda.empty_cache()
+            self.edge_scheduler.step(epoch_loss)
+            if epoch_loss < lowest_loss :
+                lowest_loss = epoch_loss
+                self.save_checkpoint(epoch , model='best_edge_teacher')
+                print("Best edge teacher checkpoint saved at epoch {}".format(epoch))
+            if epoch_loss > lowest_loss :
+                patience += 1
+            else :
+                patience = 0
+            if patience > 10 :
+                print("Early stopping")
+                break
+
             all_outputs = torch.cat(all_outputs , dim=0)
             sil_score, db_score, ch_score = get_accuracy(all_outputs , self.nbr_clusters)
 
@@ -231,8 +272,8 @@ class Train :
     def train_student(self , student_epochs , data):
         loadcheck = input("Do you want to load a checkpoint ? (y/n) : ")
         if loadcheck == 'y' :
-            self.load_checkpoint(model='feat_teacher')
-            print("Feature teacher checkpoint loaded")
+            self.load_checkpoint(model='student')
+            print("student checkpoint loaded")
         else :
             print("Training from scratch")
         print("making the clustering layer for the student model")
@@ -259,6 +300,8 @@ class Train :
 
 
         self.student.train()
+
+        lowest_loss = np.inf
 
 
 
@@ -325,6 +368,19 @@ class Train :
                 # clear memory
                 del X, adj, adj_aug, student_output, Q, P, kl_loss, struct_loss, feat_loss, loss , middle_representation , middle_representation_edge , middle_representation_feat  , clustering_loss , pe_feat , pe_feat_dense , link_prediction_loss , link_prediction
                 torch.cuda.empty_cache()
+            self.student_scheduler.step(epoch_loss)
+            if epoch_loss < lowest_loss :
+                lowest_loss = epoch_loss
+                self.save_checkpoint(epoch , model='best_student')
+                print("Best student checkpoint saved at epoch {}".format(epoch))
+            if epoch_loss > lowest_loss :
+                patience += 1
+            else :
+                patience = 0
+            if patience > 10 :
+                print("Early stopping")
+                break
+            
 
 
             print("Epoch : {} , Loss : {} , clustering_loss : {} , link_pred_loss : {}".format(epoch , epoch_loss , epoch_clustering_loss , epoch_link_prediction_loss))
@@ -347,6 +403,12 @@ class Train :
             torch.save(self.feature_teacher.state_dict() , path+'_feat_teacher.pth')
         elif model == 'edge_teacher':
             torch.save(self.edge_teacher.state_dict() , path+'_edge_teacher.pth')
+        elif model == 'best_student':
+            torch.save(self.student.state_dict() , path+'_best_student.pth')
+        elif model == 'best_feat_teacher':
+            torch.save(self.feature_teacher.state_dict() , path+'_best_feat_teacher.pth')
+        elif model == 'best_edge_teacher':
+            torch.save(self.edge_teacher.state_dict() , path+'_best_edge_teacher.pth')
         else : 
             raise ValueError("Model must be student or feat_teacher or edge_teacher")
         
@@ -361,10 +423,10 @@ class Train :
             return
         
         if model == 'student':
-            self.student.load_state_dict(torch.load(path+'_student.pth'))
+            self.student.load_state_dict(torch.load(path+'_best_student.pth'))
         elif model == 'feat_teacher':
-            self.feature_teacher.load_state_dict(torch.load(path+'_feat_teacher.pth'))
+            self.feature_teacher.load_state_dict(torch.load(path+'_best_feat_teacher.pth'))
         elif model == 'edge_teacher':
-            self.edge_teacher.load_state_dict(torch.load(path+'_edge_teacher.pth'))
+            self.edge_teacher.load_state_dict(torch.load(path+'_best_edge_teacher.pth'))
         else : 
             raise ValueError("Model must be student or feat_teacher or edge_teacher")
