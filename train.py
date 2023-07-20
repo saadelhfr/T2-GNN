@@ -15,7 +15,7 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 from tqdm import tqdm
 
 class Train : 
-    def __init__(self , epochs ,  device  , num_nodes, input_dim , output_dim , hidden2 , nbr_clusters , teta = 0.5 ,dropout_rate=0.2 , lr=0.001 , clustering_method=KMeans):
+    def __init__(self , epochs ,  device  , num_nodes, input_dim , output_dim , hidden2 , nbr_clusters , teta = 0.5 ,dropout_rate=0.2 , lr=0.001 , weight_decay=0.0005 , clustering_method=KMeans):
         self.epochs = epochs
         self.device = device
         self.num_nodes = num_nodes
@@ -25,6 +25,7 @@ class Train :
         self.nbr_clusters = nbr_clusters
         self.dropout_rate = dropout_rate
         self.lr = lr
+        self.weight_decay = weight_decay
         self.teta = teta
 
         self.feature_teacher = Teacher_Features(self.num_nodes , self.input_dim , self.output_dim , self.hidden2 , self.dropout_rate , self.device)
@@ -35,9 +36,9 @@ class Train :
         self.edge_teacher.to(self.device)
         self.student.to(self.device)
 
-        self.feat_teach_optimizer = optim.Adam(self.feature_teacher.parameters() , lr=self.lr)
-        self.edge_teach_optimizer = optim.Adam(self.edge_teacher.parameters() , lr=self.lr)
-        self.student_optimizer = optim.Adam(self.student.parameters() , lr=self.lr) 
+        self.feat_teach_optimizer = optim.Adam(self.feature_teacher.parameters() , lr=self.lr , weight_decay=self.weight_decay)
+        self.edge_teach_optimizer = optim.Adam(self.edge_teacher.parameters() , lr=self.lr , weight_decay=self.weight_decay)
+        self.student_optimizer = optim.Adam(self.student.parameters() , lr=self.lr , weight_decay=self.weight_decay) 
 
         self.clustering_method = clustering_method
 
