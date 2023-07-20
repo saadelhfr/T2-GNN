@@ -10,6 +10,7 @@ from sklearn.cluster import KMeans , SpectralClustering , AgglomerativeClusterin
 from .accuracy import get_accuracy
 from .utils import students_t_kernel_euclidean , student_t_kernel_cosine , generate_targer_distribution
 from .PPR_Matrix.ppr import topk_ppr_matrix
+from .losses import  link_prediction_objectif
 import os 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 from tqdm import tqdm
@@ -243,7 +244,7 @@ class Train :
             adj = batch.adj
             adj_aug = batch.adj_aug
             with torch.no_grad() :
-                student_output, _ = self.student(X , adj)
+                student_output, _ , _= self.student(X , adj)
                 output.append(student_output.squeeze(0))
         all_outputs = torch.cat(output , dim=0)
 
@@ -265,6 +266,9 @@ class Train :
         for epoch in range(1 , 1+student_epochs):
             print("starting epoch {}".format(epoch))
             epoch_loss=0
+            epoch_clustering_loss = 0
+            epoch_link_prediction_loss = 0
+
             for batch in tqdm(data , desc="Epoch : {}".format(epoch) , total=len(data)):
                 batch.to(self.device)
                 X = batch.x.squeeze(1)
@@ -277,28 +281,53 @@ class Train :
                     _ , middle_representation_edge = self.edge_teacher(adj_aug ,pe_feat_dense , X)
                     _ , middle_representation_feat = self.feature_teacher(X , pe_feat)
 
-                student_output , middle_representation = self.student(X , adj)
+                student_output , middle_representation , link_predictions = self.student(X , adj)
                 student_output = student_output.squeeze(0)
+                link_prediction = link_predictions.squeeze(0)
+                
                 
             
                 Q = students_t_kernel_euclidean(student_output , self.student.Cluster_Layer)
                 P = generate_targer_distribution(Q)
 
+                link_prediction_loss = link_prediction_objectif(link_prediction , batch.edge_index)
                 kl_loss = nn.KLDivLoss()(torch.log(Q) ,P.detach())
                 struct_loss , feat_loss = self.student.loss(middle_representation , middle_representation_feat , middle_representation_edge) 
-                loss = kl_loss + self.teta*struct_loss + self.teta*feat_loss
+                clustering_loss = kl_loss + self.teta*struct_loss + self.teta*feat_loss
+                loss = 0.5*clustering_loss + 0.5*link_prediction_loss
+
+                with open("Student_Training_with_link_pred.txt" , "a") as f :
+                    f.write("======================================== \n")
+                    f.write("Epoch : {} , Loss : {} \n".format(epoch , link_prediction_loss.item()))
+                    f.write("shape of the output : {} \n".format(student_output.shape))
+                    f.write("shape of the input : {} \n".format(X.shape))
+                    f.write("shape of the pe_feat : {} \n".format(pe_feat.shape))
+                    f.write("is their nan in the output : {} \n".format(torch.isnan(student_output).any()))
+                    f.write("is their nan in the input : {} \n".format(torch.isnan(X).any()))
+                    f.write("is their nan in the pe_feat : {} \n".format(torch.isnan(pe_feat).any()))
+                    f.write("is their nan in the pe_feat_dense : {} \n".format(torch.isnan(pe_feat_dense).any()))
+                    f.write("is their nan in the Q : {} \n".format(torch.isnan(Q).any()))
+                    f.write("is their nan in the P : {} \n".format(torch.isnan(P).any()))
+                    f.write("is their nan in the kl_loss : {} \n".format(torch.isnan(kl_loss).any()))
+                    f.write("is their nan in the struct_loss : {} \n".format(torch.isnan(struct_loss).any()))
+                    f.write("is their nan in the feat_loss : {} \n".format(torch.isnan(feat_loss).any()))
+                    f.write("is their nan in the clustering_loss : {} \n".format(torch.isnan(clustering_loss).any()))
+                    f.write("is their nan in the loss : {} \n".format(torch.isnan(loss).any()))
 
                 self.student_optimizer.zero_grad()
                 loss.backward()
                 self.student_optimizer.step()
                 epoch_loss += loss.item()
+                epoch_clustering_loss += clustering_loss.item()
+                epoch_link_prediction_loss += link_prediction_loss.item()
+
 
                 # clear memory
-                del X, adj, adj_aug, student_output, Q, P, kl_loss, struct_loss, feat_loss, loss
+                del X, adj, adj_aug, student_output, Q, P, kl_loss, struct_loss, feat_loss, loss , middle_representation , middle_representation_edge , middle_representation_feat  , clustering_loss , pe_feat , pe_feat_dense , link_prediction_loss , link_prediction
                 torch.cuda.empty_cache()
 
 
-            print("Epoch : {} , Loss : {}".format(epoch , epoch_loss))
+            print("Epoch : {} , Loss : {} , clustering_loss : {} , link_pred_loss : {}".format(epoch , epoch_loss , epoch_clustering_loss , epoch_link_prediction_loss))
             if epoch % 10 == 0 :
                 self.save_checkpoint(epoch , model='student')
                 print("Student model checkpoint saved at epoch {}".format(epoch))

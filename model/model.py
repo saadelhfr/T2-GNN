@@ -103,6 +103,8 @@ class Student(nn.Module):
         self.gcn2 = DenseSAGEConv(hid_channels , hid_channels)
         self.gcn3 = DenseSAGEConv(hid_channels , out_channels)
 
+        self.link_predictor = nn.Linear(out_channels , 1 , bias=True)
+
         self.feat_student = nn.Linear(self.feat_hidd , self.hid_channels , bias=True)
         self.str_student = nn.Linear(self.str_hidd , self.hid_channels , bias=True)
         self.to(self.device)
@@ -122,7 +124,9 @@ class Student(nn.Module):
         h3 = self.gcn3(h2 , Adj)
         middle_representation.append(h3)
 
-        return h3 , middle_representation
+        link_prediction = self.link_predictor(h3)
+
+        return h3 , middle_representation , link_prediction
     
     def sim(self , z1 : torch.tensor , z2 : torch.tensor):
         z1 = F.normalize(z1 ,dim=1)
